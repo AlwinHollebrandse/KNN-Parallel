@@ -13,13 +13,13 @@ using namespace std;
 
 // A comparator function used by qsort 
 int compare(const void * a, const void * b) { 
-  const int *fa = *(const int **) a; // TODO use floats?
+  const int *fa = *(const int **) a;
   const int *fb = *(const int **) b;
   return (fa[0] > fb[0]) - (fa[0] < fb[0]);
 } 
 
 // Performs majority voting using the first k first elements of an array
-int kVoting(int k, int** shortestKDistances) {
+int kVoting(int k, float** shortestKDistances) {
     map<float, int> classCounter;
     for (int i = 0; i < k; i++) {
         classCounter[shortestKDistances[i][1]]++;
@@ -39,20 +39,24 @@ int kVoting(int k, int** shortestKDistances) {
 int* KNN(ArffData* dataset)
 {
     int k = 1;
+    if (k > dataset->num_instances() - 1)
+        k = dataset->num_instances() - 1;
+
     int* predictions = (int*)malloc(dataset->num_instances() * sizeof(int));
 
     for(int i = 0; i < dataset->num_instances(); i++) // for each instance in the dataset
     {
-        float smallestDistance = FLT_MAX;
-
-        int **distancesAndClasses = (int **)malloc(dataset->num_instances() * sizeof(int *));
+        float *distancesAndClasses[dataset->num_instances() - 1]; // NOTE the -1 is there so that the instance in question wont be included
+        int distancesAndClassesIndex = -1;
 
         for(int j = 0; j < dataset->num_instances(); j++) // target each other instance
         {
-            if(i == j) continue;
+            if (i == j) continue;
 
-            distancesAndClasses[j] = (int *)malloc(2 * sizeof(float)); // making an array of 2 floats. The first will be the distance and the second will be the class 
-            
+            distancesAndClassesIndex++;
+
+            float *row = (float *)malloc(2 * sizeof(float));
+
             float distance = 0;
             
             for(int k = 0; k < dataset->num_attributes() - 1; k++) // compute the distance between the two instances
@@ -61,23 +65,23 @@ int* KNN(ArffData* dataset)
                 distance += diff * diff;
             }
             
-            distancesAndClasses[j][0] = sqrt(distance);
-            distancesAndClasses[j][1] = dataset->get_instance(j)->get(dataset->num_attributes() - 1)->operator float();
+            row[0] = sqrt(distance);
+            row[1] = dataset->get_instance(j)->get(dataset->num_attributes() - 1)->operator float();
+            distancesAndClasses[distancesAndClassesIndex] = row;
         }
 
-        qsort(distancesAndClasses, dataset->num_instances(), (2 * sizeof(float)), compare); // TODO is the 3 arg correct? or shouldit be a pointer?
+        qsort(distancesAndClasses, dataset->num_instances() - 1, (2 * sizeof(float)), compare);
 
-        // TODO insert the MPI return here
-        // TODO add frees for all added mallocs?
-        // TODO add check for if k > len(distances)
-        // int **shortestKDistances = (int **)malloc(k * sizeof(int *));
-        // for(int j = 0; j < k; j++) {
-        //     shortestKDistances[j] = (int *)malloc(2 * sizeof(float));
-        //     shortestKDistances[j] = distancesAndClasses[j];
-        // }
-        // return shortestKDistances;
+        float *shortestKDistances[k];
+        for(int j = 0; j < k; j++) {
+            shortestKDistances[j] = distancesAndClasses[j];
+        }
         
-        predictions[i] = kVoting(k, distancesAndClasses);
+        predictions[i] = kVoting(k, shortestKDistances);
+
+        for (int j = 0; j < dataset->num_instances() - 1; j++) {
+            free(distancesAndClasses[j]);
+        }
     }
     
     return predictions;
@@ -183,6 +187,8 @@ int main(int argc, char *argv[])
     
     confusionMatrix = computeConfusionMatrix(predictions, dataset);
     accuracy = computeAccuracy(confusionMatrix, dataset);
+
+    free(predictions);
   
     printf("The 1NN classifier OpenMP for %lu instances required %llu ms CPU time, accuracy was %.4f\n", dataset->num_instances(), (long long unsigned int) diff, accuracy);    
 }
