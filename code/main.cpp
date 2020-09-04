@@ -7,7 +7,8 @@
 #include "libarff/arff_parser.h"
 #include "libarff/arff_data.h"
 #include <map>
-// #include "mpi.h"
+#include <sys/sysinfo.h>
+#include <mpi.h>
 
 using namespace std;
 
@@ -19,7 +20,7 @@ int compare(const void * a, const void * b) {
 } 
 
 // Performs majority voting using the first k first elements of an array
-int kVoting(int k, float** shortestKDistances) {
+int kVoting(int k, float** shortestKDistances) { // TODO need k * number of processes? int len = sizeof(arr)/sizeof(arr[0]);
     map<float, int> classCounter;
     for (int i = 0; i < k; i++) {
         classCounter[shortestKDistances[i][1]]++;
@@ -37,37 +38,50 @@ int kVoting(int k, float** shortestKDistances) {
 }
 
 // int* mainKNN(ArffData* dataset) {
+//     printf("This system has %d processors configured and "
+//         "%d processors available.\n",
+//         get_nprocs_conf(), get_nprocs());
+//     int elements_per_proc = dataset->num_instances() / get_nprocs_conf(); // TODO or get_nprocs()?\
+
+//     int world_size, world_rank, sendcount, recvcount, source; // TODO is source needed?
+
+//     MPI_Init(&argc,&argv);
+//     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+//     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
 //     int* predictions = (int*)malloc(dataset->num_instances() * sizeof(int));
 
 //     int world_rank = 0;
 //     if (world_rank == 0) {
 
 //     }
+
 //     // Create a buffer that will hold a subset of the random numbers
-//     float *sub_rand_nums = (float*)malloc(sizeof(float) * elements_per_proc); // TODO change to arff type?
+//     float *sub_dataSet = (float*)malloc(sizeof(dataset->get_instance(0)) * elements_per_proc);
 
 //     // Scatter the random numbers to all processes
-//     MPI_Scatter(rand_nums, elements_per_proc, MPI_FLOAT, sub_rand_nums,
-//             elements_per_proc, MPI_FLOAT, 0, MPI_COMM_WORLD);
+//     MPI_Scatter(dataset, elements_per_proc, MPI_FLOAT, sub_dataSet,
+//             elements_per_proc, MPI_FLOAT, 0, MPI_COMM_WORLD); // MPI_FLOAT should be the arff type? or a multiplier?
 
 //     // Compute the average of your subset
-//     float sub_avg = compute_avg(sub_rand_nums, elements_per_proc);
+//     float *shortestKDistances[k];
+//     getKNNForInstance(dataset->get_instance(i), k, distancesAndClasses, shortestKDistances, sub_dataSet); // TODO k * number processes used
+    
 //     // Gather all partial averages down to the root process
-//     float *sub_avgs = NULL;
+//     float *sub_kNNs = NULL;
 
 //     if (world_rank == 0) {
-//         sub_avgs = malloc(sizeof(float) * world_size);
+//         sub_kNNs = malloc(sizeof(float) * world_size);
 //     }
-//     MPI_Gather(&sub_avg, 1, MPI_FLOAT, sub_avgs, 1, MPI_FLOAT, 0,
+//     MPI_Gather(&sub_kNNs, 1, MPI_FLOAT, sub_kNNs, 1, MPI_FLOAT, 0,
 //             MPI_COMM_WORLD);
 
 //     // Compute the total average of all numbers.
 //     if (world_rank == 0) {
 //         float avg = compute_avg(sub_avgs, world_size);
-//                 predictions[i] = kVoting(k, shortestKDistances);
-
+//         predictions[i] = kVoting(k, shortestKDistances);// TODO not using shortestDistances, but the combined of them
 //     }
-
+//     MPI_Finalize();
 // }
 
 float** getKNNForInstance(ArffInstance* instance, int k, float **distancesAndClasses, float **shortestKDistances, ArffData* dataset) { // TODO right type?
@@ -108,6 +122,18 @@ float** getKNNForInstance(ArffInstance* instance, int k, float **distancesAndCla
 }
 
 int* KNN(ArffData* dataset) {
+    printf("This system has %d processors configured and "
+        "%d processors available.\n",
+        get_nprocs_conf(), get_nprocs());
+    int elements_per_proc = dataset->num_instances() / get_nprocs_conf(); // TODO or get_nprocs()?
+
+    int world_size, world_rank, sendcount, recvcount, source; // TODO is source needed? or most of these
+
+    MPI_Init(&argc,&argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+
     int k = 1;
     if (k > dataset->num_instances() - 1)
         k = dataset->num_instances() - 1;
@@ -117,8 +143,40 @@ int* KNN(ArffData* dataset) {
     // TODO parallel
     for(int i = 0; i < dataset->num_instances(); i++) { // for each instance in the dataset
         float *distancesAndClasses[dataset->num_instances() - 1]; // NOTE the -1 is there so that the instance in question wont be included
+
+        // serial **************************************************************
+        // float *shortestKDistances[k];
+        // getKNNForInstance(dataset->get_instance(i), k, distancesAndClasses, shortestKDistances, dataset); // TODO k * number processes used
+
+
+        // inner parallel **************************************************************
+        // Create a buffer that will hold a subset of the random numbers
+        float *sub_dataSet = (float*)malloc(sizeof(dataset->get_instance(0)) * elements_per_proc);
+
+        // Scatter the random numbers to all processes
+        MPI_Scatter(dataset, elements_per_proc, MPI_FLOAT, sub_dataSet,
+                elements_per_proc, MPI_FLOAT, 0, MPI_COMM_WORLD); // MPI_FLOAT should be the arff type? or a multiplier?
+
+        // Compute the average of your subset
         float *shortestKDistances[k];
-        getKNNForInstance(dataset->get_instance(i), k, distancesAndClasses, shortestKDistances, dataset); // TODO k * number processes used
+        getKNNForInstance(dataset->get_instance(i), k, distancesAndClasses, shortestKDistances, sub_dataSet); // TODO k * number processes used
+        
+        // Gather all partial averages down to the root process
+        float *sub_kNNs = NULL;
+
+        if (world_rank == 0) {
+            sub_kNNs = malloc(sizeof(float) * world_size);
+        }
+        MPI_Gather(&sub_kNNs, 1, MPI_FLOAT, sub_kNNs, 1, MPI_FLOAT, 0,
+                MPI_COMM_WORLD);
+
+        // Compute the total average of all numbers.
+        if (world_rank == 0) {
+            predictions[i] = kVoting(k, shortestKDistances);// TODO not using shortestDistances, but the combined of them
+        }
+        // MPI_Finalize();
+
+
         predictions[i] = kVoting(k, shortestKDistances);
 
         // TODO move free
@@ -127,7 +185,7 @@ int* KNN(ArffData* dataset) {
         }
         
     }
-    
+    MPI_Finalize();
     return predictions;
 }
 
