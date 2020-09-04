@@ -80,6 +80,10 @@ int* KNN(ArffData* dataset)
         }
         
         predictions[i] = kVoting(k, shortestKDistances);
+
+        for (int j = 0; j < dataset->num_instances() - 1; j++) {
+            free(distancesAndClasses[j]);
+        }
     }
     
     return predictions;
