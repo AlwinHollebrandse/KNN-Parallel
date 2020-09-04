@@ -1,0 +1,2 @@
+NOTE: this kNN classifier predicts each data element in the provided dataset by using the remainder of the dataset.
+NOTE: If the provided k is larger than the number of elements in the dataset, it gets set to the size of the datset.  
