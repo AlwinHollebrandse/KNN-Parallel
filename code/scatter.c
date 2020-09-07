@@ -2,7 +2,7 @@
 #include <stdio.h>
 #define SIZE 4
 
-void main(int argc, char *argv[])
+int main(int argc, char *argv[])
 {
    int numtasks, rank, sendcount, recvcount, source;
    float sendbuf[SIZE][SIZE] = {

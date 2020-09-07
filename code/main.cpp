@@ -8,7 +8,8 @@
 #include "libarff/arff_data.h"
 #include <map>
 #include <sys/sysinfo.h>
-#include <mpi.h>
+#include "mpi.h"
+// #include "usr/bin/mpiCC/mpi.h"
 
 using namespace std;
 
@@ -19,10 +20,10 @@ int compare(const void * a, const void * b) {
   return (fa[0] > fb[0]) - (fa[0] < fb[0]);
 } 
 
-// Performs majority voting using the first k first elements of an array
-int kVoting(int k, float** shortestKDistances) { // TODO need k * number of processes? int len = sizeof(arr)/sizeof(arr[0]);
+// Performs majority voting using the first globalK first elements of an array
+int kVoting(int globalK, float** shortestKDistances) { // TODO need globalK * number of processes? int len = sizeof(arr)/sizeof(arr[0]);
     map<float, int> classCounter;
-    for (int i = 0; i < k; i++) {
+    for (int i = 0; i < globalK; i++) {
         classCounter[shortestKDistances[i][1]]++;
     }
 
@@ -37,65 +38,22 @@ int kVoting(int k, float** shortestKDistances) { // TODO need k * number of proc
     return voteResult;
 }
 
-// int* mainKNN(ArffData* dataset) {
-//     printf("This system has %d processors configured and "
-//         "%d processors available.\n",
-//         get_nprocs_conf(), get_nprocs());
-//     int elements_per_proc = dataset->num_instances() / get_nprocs_conf(); // TODO or get_nprocs()?\
+// TODO change instance type
+float** getKNNForInstance(ArffInstance* instance, int globalK, float **distancesAndClasses, float **shortestKDistances, float* dataset, int numberOfRows, int numberOfCols) {
+    // float *distancesAndClasses[dataset->num_instances() - 1]; // NOTE the -1 is there so that the instance in question wont be included // TODO only need the -1 for 1 thread...
 
-//     int world_size, world_rank, sendcount, recvcount, source; // TODO is source needed?
-
-//     MPI_Init(&argc,&argv);
-//     MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-//     MPI_Comm_size(MPI_COMM_WORLD, &world_size);
-
-//     int* predictions = (int*)malloc(dataset->num_instances() * sizeof(int));
-
-//     int world_rank = 0;
-//     if (world_rank == 0) {
-
-//     }
-
-//     // Create a buffer that will hold a subset of the random numbers
-//     float *sub_dataSet = (float*)malloc(sizeof(dataset->get_instance(0)) * elements_per_proc);
-
-//     // Scatter the random numbers to all processes
-//     MPI_Scatter(dataset, elements_per_proc, MPI_FLOAT, sub_dataSet,
-//             elements_per_proc, MPI_FLOAT, 0, MPI_COMM_WORLD); // MPI_FLOAT should be the arff type? or a multiplier?
-
-//     // Compute the average of your subset
-//     float *shortestKDistances[k];
-//     getKNNForInstance(dataset->get_instance(i), k, distancesAndClasses, shortestKDistances, sub_dataSet); // TODO k * number processes used
-    
-//     // Gather all partial averages down to the root process
-//     float *sub_kNNs = NULL;
-
-//     if (world_rank == 0) {
-//         sub_kNNs = malloc(sizeof(float) * world_size);
-//     }
-//     MPI_Gather(&sub_kNNs, 1, MPI_FLOAT, sub_kNNs, 1, MPI_FLOAT, 0,
-//             MPI_COMM_WORLD);
-
-//     // Compute the total average of all numbers.
-//     if (world_rank == 0) {
-//         float avg = compute_avg(sub_avgs, world_size);
-//         predictions[i] = kVoting(k, shortestKDistances);// TODO not using shortestDistances, but the combined of them
-//     }
-//     MPI_Finalize();
-// }
-
-float** getKNNForInstance(ArffInstance* instance, int k, float **distancesAndClasses, float **shortestKDistances, ArffData* dataset) { // TODO right type?
+    // TODO change dataset to float 2d array, then in loop change to data set instance?
     int distancesAndClassesIndex = -1;
 
     // TODO parallel
-    for(int j = 0; j < dataset->num_instances(); j++) { // target each other instance
+    for(int j = 0; j < numberOfRows; j++) { // target each other instance
 
         // TODO when this is in parallel, only 1 process will actual have the real data value. so only one needs this...
         // NOTE could share daset and just sent starting and ending indexes
         /// I think scatter gives a portion, so the above wont twork...
         // maybe a deep equal? does that work across processes? if instance was passed maybe
         // if (i == j) continue;
-        if (instance == dataset->get_instance(j)) continue;
+        // if (instance == dataset->get_instance(j)) continue; // TODO this check will change
 
         distancesAndClassesIndex++;
 
@@ -103,88 +61,149 @@ float** getKNNForInstance(ArffInstance* instance, int k, float **distancesAndCla
 
         float distance = 0;
         
-        for(int k = 0; k < dataset->num_attributes() - 1; k++) { // compute the distance between the two instances
-            float diff = instance->get(k)->operator float() - dataset->get_instance(j)->get(k)->operator float();
+        for(int globalK = 0; globalK < numberOfCols - 1; globalK++) { // compute the distance between the two instances, the -1 ignores the class
+            float diff = instance->get(globalK)->operator float() - *(dataset + j * numberOfCols + globalK);
             distance += diff * diff;
         }
         
         row[0] = sqrt(distance);
-        row[1] = dataset->get_instance(j)->get(dataset->num_attributes() - 1)->operator float();
+        row[1] = *(dataset + j * numberOfCols + numberOfCols - 1);
         distancesAndClasses[distancesAndClassesIndex] = row;
     }
 
-    qsort(distancesAndClasses, dataset->num_instances() - 1, (2 * sizeof(float)), compare);
+    qsort(distancesAndClasses, numberOfRows - 1, (2 * sizeof(float)), compare);
 
+    // TODO can you free distancesAndClasses here without corrupting shortestK?
     // TODO insert the MPI return here
-    for(int j = 0; j < k; j++) {
+    for(int j = 0; j < globalK; j++) {
         shortestKDistances[j] = distancesAndClasses[j];
     }
 }
 
-int* KNN(ArffData* dataset) {
+void printArray (float *datasetAsMatrix, int numberOfRows, int numberOfCols, int rank) {
+    for (int x = 0; x < numberOfRows; x++) {
+        for (int y = 0; y < numberOfCols; y++) {
+            printf("rank:%d, datasetAsMatrix[%d][%d]: %f\n", rank, x, y, *(datasetAsMatrix + x * numberOfCols + y));
+        }
+        printf("\n");
+    }
+}
+
+int* KNN(ArffData* dataset, int argc, char *argv[]) {
     printf("This system has %d processors configured and "
         "%d processors available.\n",
         get_nprocs_conf(), get_nprocs());
-    int elements_per_proc = dataset->num_instances() / get_nprocs_conf(); // TODO or get_nprocs()?
 
-    int world_size, world_rank, sendcount, recvcount, source; // TODO is source needed? or most of these
+    // int world_size, world_rank, sendcount, recvcount, source; // TODO is source needed? or most of these
+
+    // TODO what can be deleted?
+    int SIZE = 2;
+    int numtasks, rank, sendcount, recvcount, source;
+    float sendbuf[SIZE][SIZE] = {
+        {1.0, 2.0, 3.0, 4.0},
+        {5.0, 6.0, 7.0, 8.0},
+        {9.0, 10.0, 11.0, 12.0},
+        {13.0, 14.0, 15.0, 16.0}  };
+    float recvbuf[SIZE];
 
     MPI_Init(&argc,&argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &numtasks);
+    printf("Hello, world.  I am %d of %d\n", rank, numtasks);
 
-
-    int k = 1;
-    if (k > dataset->num_instances() - 1)
-        k = dataset->num_instances() - 1;
+    int globalK = 1;
+    if (globalK > dataset->num_instances() - 1)
+        globalK = dataset->num_instances() - 1;
 
     int* predictions = (int*)malloc(dataset->num_instances() * sizeof(int));
 
     // TODO parallel
     for(int i = 0; i < dataset->num_instances(); i++) { // for each instance in the dataset
-        float *distancesAndClasses[dataset->num_instances() - 1]; // NOTE the -1 is there so that the instance in question wont be included
+        float *distancesAndClasses[dataset->num_instances()];// - 1]; // NOTE the -1 is there so that the instance in question wont be included
 
         // serial **************************************************************
-        // float *shortestKDistances[k];
-        // getKNNForInstance(dataset->get_instance(i), k, distancesAndClasses, shortestKDistances, dataset); // TODO k * number processes used
+        // float *shortestKDistances[globalK];
+        // getKNNForInstance(dataset->get_instance(i), globalK, distancesAndClasses, shortestKDistances, dataset); // TODO globalK * number processes used
 
+        // ArffData* newDataSet = new ArffData();
+        // newDataSet->add_instance(dataset->get_instance(0));
 
         // inner parallel **************************************************************
         // Create a buffer that will hold a subset of the random numbers
-        float *sub_dataSet = (float*)malloc(sizeof(dataset->get_instance(0)) * elements_per_proc);
+
 
         // Scatter the random numbers to all processes
-        MPI_Scatter(dataset, elements_per_proc, MPI_FLOAT, sub_dataSet,
-                elements_per_proc, MPI_FLOAT, 0, MPI_COMM_WORLD); // MPI_FLOAT should be the arff type? or a multiplier?
+        // if (numtasks == SIZE) {
+        int floats_per_proc =  (dataset->num_instances() * dataset->num_attributes()) / numtasks; // (dataset->num_attributes() * dataset->num_instances()) / numtasks; // TODO am I sending a dataset elem or each float of it? is * dataset->num_attributes();
+        int instances_per_proc = dataset->num_instances() / numtasks;
+        // printf("floats_per_proc %d, instances_per_pro %d\n", floats_per_proc, instances_per_proc);
 
-        // Compute the average of your subset
-        float *shortestKDistances[k];
-        getKNNForInstance(dataset->get_instance(i), k, distancesAndClasses, shortestKDistances, sub_dataSet); // TODO k * number processes used
+        // float *sub_dataSet = (float*)malloc(sizeof(float) * floats_per_proc);
+            
+        // float *datasetAsMatrix[dataset->num_instances()];
+        float *datasetAsMatrix = (float*)malloc(sizeof(float) * dataset->num_instances() * dataset->num_attributes()); // NOTE as far as im aware, scatter can onnly be done on linearly assigned arrays of preset types. Which is why the dataset needed to be converted
+
+        if (rank == 0) {
+            for (int x = 0; x < dataset->num_instances(); x++) 
+                for (int y = 0; y < dataset->num_attributes(); y++)
+                    *(datasetAsMatrix + x * dataset->num_attributes() + y) = dataset->get_instance(x)->get(y)->operator float();
+        }
+
+        float *sub_dataSet = (float*)malloc(sizeof(float) * floats_per_proc);
+
+        // printArray (datasetAsMatrix, dataset->num_instances(), dataset->num_attributes(), rank);
+
+        // printf("scatter\n");
+
+        // define source task and elements to send/receive, then perform collective scatter
+        source = 0;
+        MPI_Scatter(datasetAsMatrix, floats_per_proc, MPI_FLOAT, sub_dataSet, 
+            floats_per_proc, MPI_FLOAT, source, MPI_COMM_WORLD);
+
+            // printArray(sub_dataSet, instances_per_proc, dataset->num_attributes(), rank);
+                    // TODO free subarray
+
+        // Compute the kNN of a thread's data
+        int localK = globalK;
+        if (localK > instances_per_proc - 1)
+            localK = instances_per_proc - 1;
+        float *shortestKDistances[localK];
+        // TODO dataset will be changed to non arff type after outer mpi scatter
+        getKNNForInstance(dataset->get_instance(i), localK, distancesAndClasses, shortestKDistances, sub_dataSet, instances_per_proc, dataset->num_attributes()); // TODO globalK * number processes used
+        for (int x = 0; x < localK; x++)
+            printf("rank: %d, shortestKDistances: %d, distance: %f, class: %f\n", rank, x, shortestKDistances[x][0], shortestKDistances[x][1]);
         
-        // Gather all partial averages down to the root process
-        float *sub_kNNs = NULL;
+        // printf("hi2");
 
-        if (world_rank == 0) {
-            sub_kNNs = malloc(sizeof(float) * world_size);
-        }
-        MPI_Gather(&sub_kNNs, 1, MPI_FLOAT, sub_kNNs, 1, MPI_FLOAT, 0,
-                MPI_COMM_WORLD);
+        // // Gather all partial averages down to the root process
+        // float *sub_kNNs = NULL;
 
-        // Compute the total average of all numbers.
-        if (world_rank == 0) {
-            predictions[i] = kVoting(k, shortestKDistances);// TODO not using shortestDistances, but the combined of them
-        }
+        // if (rank == 0) {
+        //     sub_kNNs = (float*)malloc(sizeof(float) * floats_per_proc * globalK); // TODO ont be correct size. since its a 2d array that also includes size...
+        // }
+        // MPI_Gather(&sub_kNNs, 1, MPI_FLOAT, sub_kNNs, 1, MPI_FLOAT, 0,
+        //         MPI_COMM_WORLD);
+
+        // // Compute the total average of all numbers.
+        // if (world_rank == 0) {
+        //     qsort(distancesAndClasses, dataset->num_instances() - 1, (2 * sizeof(float)), compare);
+        //     predictions[i] = kVoting(globalK, shortestKDistances);// TODO not using shortestDistances, but the combined of them
+        // }
         // MPI_Finalize();
 
 
-        predictions[i] = kVoting(k, shortestKDistances);
+        // predictions[i] = kVoting(globalK, shortestKDistances);
 
         // TODO move free
-        for (int j = 0; j < dataset->num_instances() - 1; j++) {
-            free(distancesAndClasses[j]);
-        }
+        // for (int j = 0; j < dataset->num_instances() - 1; j++) {
+        //     free(distancesAndClasses[j]);
+        // }
+        // }
+        // else
+        //     printf("Nope, you must specify -np %d processors. Terminating.\n",SIZE); // TODO needed?
         
     }
+    
     MPI_Finalize();
     return predictions;
 }
@@ -226,16 +245,16 @@ int main(int argc, char *argv[]) {
     clock_gettime(CLOCK_MONOTONIC_RAW, &start);
     
     // Get the class predictions
-    int* predictions = KNN(dataset);
+    int* predictions = KNN(dataset, argc, argv);
     // Compute the confusion matrix
-    int* confusionMatrix = computeConfusionMatrix(predictions, dataset);
-    // Calculate the accuracy
-    float accuracy = computeAccuracy(confusionMatrix, dataset);
+    // int* confusionMatrix = computeConfusionMatrix(predictions, dataset);
+    // // Calculate the accuracy
+    // float accuracy = computeAccuracy(confusionMatrix, dataset);
     
-    clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-    uint64_t diff = (1000000000L * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / 1e6;
+    // clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+    // uint64_t diff = (1000000000L * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / 1e6;
 
-    free(predictions);
+    // free(predictions);
   
-    printf("The KNN classifier for %lu instances required %llu ms CPU time, accuracy was %.4f\n", dataset->num_instances(), (long long unsigned int) diff, accuracy);
+    // printf("The KNN classifier for %lu instances required %llu ms CPU time, accuracy was %.4f\n", dataset->num_instances(), (long long unsigned int) diff, accuracy);
 }
