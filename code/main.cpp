@@ -9,7 +9,6 @@
 #include <map>
 #include <sys/sysinfo.h>
 #include "mpi.h"
-// #include "usr/bin/mpiCC/mpi.h"
 
 using namespace std;
 
@@ -38,47 +37,84 @@ int kVoting(int globalK, float** shortestKDistances) { // TODO need globalK * nu
     return voteResult;
 }
 
-// TODO change instance type
-float** getKNNForInstance(ArffInstance* instance, int globalK, float **distancesAndClasses, float **shortestKDistances, float* dataset, int numberOfRows, int numberOfCols) {
-    // float *distancesAndClasses[dataset->num_instances() - 1]; // NOTE the -1 is there so that the instance in question wont be included // TODO only need the -1 for 1 thread...
-
-    // TODO change dataset to float 2d array, then in loop change to data set instance?
+float** getKNNForInstance(ArffInstance* instance, int k, float **distancesAndClasses, float **shortestKDistances, ArffData* dataset) { // TODO right type?
     int distancesAndClassesIndex = -1;
 
     // TODO parallel
-    for(int j = 0; j < numberOfRows; j++) { // target each other instance
+    for(int j = 0; j < dataset->num_instances(); j++) { // target each other instance
 
         // TODO when this is in parallel, only 1 process will actual have the real data value. so only one needs this...
         // NOTE could share daset and just sent starting and ending indexes
         /// I think scatter gives a portion, so the above wont twork...
         // maybe a deep equal? does that work across processes? if instance was passed maybe
         // if (i == j) continue;
-        // if (instance == dataset->get_instance(j)) continue; // TODO this check will change
+        if (instance == dataset->get_instance(j)) continue;
 
         distancesAndClassesIndex++;
 
         float *row = (float *)malloc(2 * sizeof(float));
 
         float distance = 0;
-        
-        for(int globalK = 0; globalK < numberOfCols - 1; globalK++) { // compute the distance between the two instances, the -1 ignores the class
-            float diff = instance->get(globalK)->operator float() - *(dataset + j * numberOfCols + globalK);
+
+        for(int k = 0; k < dataset->num_attributes() - 1; k++) { // compute the distance between the two instances
+            float diff = instance->get(k)->operator float() - dataset->get_instance(j)->get(k)->operator float();
             distance += diff * diff;
         }
-        
+
         row[0] = sqrt(distance);
-        row[1] = *(dataset + j * numberOfCols + numberOfCols - 1);
+        row[1] = dataset->get_instance(j)->get(dataset->num_attributes() - 1)->operator float();
         distancesAndClasses[distancesAndClassesIndex] = row;
     }
 
-    qsort(distancesAndClasses, numberOfRows - 1, (2 * sizeof(float)), compare);
+    qsort(distancesAndClasses, dataset->num_instances() - 1, (2 * sizeof(float)), compare);
 
-    // TODO can you free distancesAndClasses here without corrupting shortestK?
     // TODO insert the MPI return here
-    for(int j = 0; j < globalK; j++) {
+    for(int j = 0; j < k; j++) {
         shortestKDistances[j] = distancesAndClasses[j];
     }
 }
+
+// // TODO change instance type
+// float** getKNNForInstance(ArffInstance* instance, int globalK, float **distancesAndClasses, float **shortestKDistances, float* dataset, int numberOfRows, int numberOfCols) {
+//     // float *distancesAndClasses[dataset->num_instances() - 1]; // NOTE the -1 is there so that the instance in question wont be included // TODO only need the -1 for 1 thread...
+
+//     // TODO change dataset to float 2d array, then in loop change to data set instance?
+//     int distancesAndClassesIndex = -1;
+
+//     // TODO parallel
+//     for(int j = 0; j < numberOfRows; j++) { // target each other instance
+
+//         // TODO when this is in parallel, only 1 process will actual have the real data value. so only one needs this...
+//         // NOTE could share daset and just sent starting and ending indexes
+//         /// I think scatter gives a portion, so the above wont twork...
+//         // maybe a deep equal? does that work across processes? if instance was passed maybe
+//         // if (i == j) continue;
+//         // if (instance == dataset->get_instance(j)) continue; // TODO this check will change
+
+//         distancesAndClassesIndex++;
+
+//         float *row = (float *)malloc(2 * sizeof(float));
+
+//         float distance = 0;
+        
+//         for(int globalK = 0; globalK < numberOfCols - 1; globalK++) { // compute the distance between the two instances, the -1 ignores the class
+//             float diff = instance->get(globalK)->operator float() - *(dataset + j * numberOfCols + globalK);
+//             distance += diff * diff;
+//         }
+        
+//         row[0] = sqrt(distance);
+//         row[1] = *(dataset + j * numberOfCols + numberOfCols - 1);
+//         distancesAndClasses[distancesAndClassesIndex] = row;
+//     }
+
+//     qsort(distancesAndClasses, numberOfRows - 1, (2 * sizeof(float)), compare);
+
+//     // TODO can you free distancesAndClasses here without corrupting shortestK?
+//     // TODO insert the MPI return here
+//     for(int j = 0; j < globalK; j++) {
+//         shortestKDistances[j] = distancesAndClasses[j];
+//     }
+// }
 
 void printArray (float *datasetAsMatrix, int numberOfRows, int numberOfCols, int rank) {
     for (int x = 0; x < numberOfRows; x++) {
@@ -118,7 +154,7 @@ int* KNN(ArffData* dataset, int argc, char *argv[]) {
     int* predictions = (int*)malloc(dataset->num_instances() * sizeof(int));
 
     // TODO parallel
-    for(int i = 0; i < dataset->num_instances(); i++) { // for each instance in the dataset
+    for(int i = 0; i < 1; i++) {//dataset->num_instances(); i++) { // for each instance in the dataset
         float *distancesAndClasses[dataset->num_instances()];// - 1]; // NOTE the -1 is there so that the instance in question wont be included
 
         // serial **************************************************************
@@ -133,46 +169,54 @@ int* KNN(ArffData* dataset, int argc, char *argv[]) {
 
 
         // Scatter the random numbers to all processes
-        // if (numtasks == SIZE) {
         int floats_per_proc =  (dataset->num_instances() * dataset->num_attributes()) / numtasks; // (dataset->num_attributes() * dataset->num_instances()) / numtasks; // TODO am I sending a dataset elem or each float of it? is * dataset->num_attributes();
         int instances_per_proc = dataset->num_instances() / numtasks;
-        // printf("floats_per_proc %d, instances_per_pro %d\n", floats_per_proc, instances_per_proc);
 
-        // float *sub_dataSet = (float*)malloc(sizeof(float) * floats_per_proc);
-            
-        // float *datasetAsMatrix[dataset->num_instances()];
-        float *datasetAsMatrix = (float*)malloc(sizeof(float) * dataset->num_instances() * dataset->num_attributes()); // NOTE as far as im aware, scatter can onnly be done on linearly assigned arrays of preset types. Which is why the dataset needed to be converted
-
+        int *allThreadInnerIndexesArray = (int*)malloc(sizeof(int) * numtasks * 2);
         if (rank == 0) {
-            for (int x = 0; x < dataset->num_instances(); x++) 
-                for (int y = 0; y < dataset->num_attributes(); y++)
-                    *(datasetAsMatrix + x * dataset->num_attributes() + y) = dataset->get_instance(x)->get(y)->operator float();
+            for (int currentIndex = 0; currentIndex  < 2 * numtasks; currentIndex++) {
+                int threadStartingIndex = 0;
+                if (currentIndex > 0)
+                    threadStartingIndex = allThreadInnerIndexesArray[currentIndex - 1];
+                allThreadInnerIndexesArray[currentIndex] = threadStartingIndex;
+                currentIndex++;
+
+                int threadEndingIndex = allThreadInnerIndexesArray[currentIndex - 1] + instances_per_proc;
+                if (threadEndingIndex >= dataset->num_instances()) // TODO check condition
+                    threadStartingIndex = dataset->num_instances(); // set to max possible
+                allThreadInnerIndexesArray[currentIndex] = threadEndingIndex;
+            }
+
+            printf("allThreadInnerIndexesArray: ");
+            for (int x = 0; x < numtasks * 2; x++)
+                printf("%d, ", allThreadInnerIndexesArray[x]);
+            printf("\n");
         }
 
-        float *sub_dataSet = (float*)malloc(sizeof(float) * floats_per_proc);
+        int *threadInnerIndexesArray = (int*)malloc(sizeof(int) * 2);
 
         // printArray (datasetAsMatrix, dataset->num_instances(), dataset->num_attributes(), rank);
 
         // printf("scatter\n");
 
         // define source task and elements to send/receive, then perform collective scatter
-        source = 0;
-        MPI_Scatter(datasetAsMatrix, floats_per_proc, MPI_FLOAT, sub_dataSet, 
-            floats_per_proc, MPI_FLOAT, source, MPI_COMM_WORLD);
+        source = 0; // TODO technocially, this could be outside the outside loop. Both inner and outer would use it.
+        MPI_Scatter(allThreadInnerIndexesArray, 2, MPI_INTEGER, threadInnerIndexesArray, 
+            2, MPI_INTEGER, source, MPI_COMM_WORLD);
 
             // printArray(sub_dataSet, instances_per_proc, dataset->num_attributes(), rank);
                     // TODO free subarray
-
-        // Compute the kNN of a thread's data
-        int localK = globalK;
-        if (localK > instances_per_proc - 1)
-            localK = instances_per_proc - 1;
-        float *shortestKDistances[localK];
-        // TODO dataset will be changed to non arff type after outer mpi scatter
-        getKNNForInstance(dataset->get_instance(i), localK, distancesAndClasses, shortestKDistances, sub_dataSet, instances_per_proc, dataset->num_attributes()); // TODO globalK * number processes used
-        // printf("rank: %d, instance: ", rank, dataset->get_instance(i)
-        for (int x = 0; x < localK; x++)
-            printf("rank: %d, shortestKDistances: %d, distance: %f, class: %f\n", rank, x, shortestKDistances[x][0], shortestKDistances[x][1]);
+        printf("rank: %d, threadInnerIndexesArray: %d, %d\n", rank, threadInnerIndexesArray[0], threadInnerIndexesArray[1]);
+        // // Compute the kNN of a thread's data
+        // int localK = globalK;
+        // if (localK > instances_per_proc - 1)
+        //     localK = instances_per_proc - 1;
+        // float *shortestKDistances[localK];
+        // // TODO dataset will be changed to non arff type after outer mpi scatter
+        // getKNNForInstance(dataset->get_instance(i), localK, distancesAndClasses, shortestKDistances, sub_dataSet, instances_per_proc, dataset->num_attributes()); // TODO globalK * number processes used
+        // // printf("rank: %d, instance: ", rank, dataset->get_instance(i)
+        // for (int x = 0; x < localK; x++)
+        //     printf("rank: %d, shortestKDistances: %d, distance: %f, class: %f\n", rank, x, shortestKDistances[x][0], shortestKDistances[x][1]);
         
         // printf("hi2");
 
@@ -199,10 +243,6 @@ int* KNN(ArffData* dataset, int argc, char *argv[]) {
         // for (int j = 0; j < dataset->num_instances() - 1; j++) {
         //     free(distancesAndClasses[j]);
         // }
-        // }
-        // else
-        //     printf("Nope, you must specify -np %d processors. Terminating.\n",SIZE); // TODO needed?
-        
     }
     
     MPI_Finalize();
