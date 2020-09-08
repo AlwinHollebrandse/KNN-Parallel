@@ -111,7 +111,7 @@ int* KNN(ArffData* dataset, int argc, char *argv[]) {
     MPI_Comm_size(MPI_COMM_WORLD, &numtasks);
     printf("Hello, world.  I am %d of %d\n", rank, numtasks);
 
-    int globalK = 1;
+    int globalK = 1; // TODO make a command line arg
     if (globalK > dataset->num_instances() - 1)
         globalK = dataset->num_instances() - 1;
 
@@ -170,6 +170,7 @@ int* KNN(ArffData* dataset, int argc, char *argv[]) {
         float *shortestKDistances[localK];
         // TODO dataset will be changed to non arff type after outer mpi scatter
         getKNNForInstance(dataset->get_instance(i), localK, distancesAndClasses, shortestKDistances, sub_dataSet, instances_per_proc, dataset->num_attributes()); // TODO globalK * number processes used
+        // printf("rank: %d, instance: ", rank, dataset->get_instance(i)
         for (int x = 0; x < localK; x++)
             printf("rank: %d, shortestKDistances: %d, distance: %f, class: %f\n", rank, x, shortestKDistances[x][0], shortestKDistances[x][1]);
         
