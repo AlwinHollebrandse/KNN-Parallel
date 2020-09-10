@@ -35,9 +35,9 @@ int kVoting(int globalK, float** shortestKDistances) { // TODO need globalK * nu
         }
     }
 
-    for (auto i : classCounter) {
-        printf("class: %d, numberOfVotes: %d ", (int)i.first, i.second);
-    }
+    // for (auto i : classCounter) {
+    //     printf("class: %d, numberOfVotes: %d ", (int)i.first, i.second);
+    // }
 
     return voteResult;
 }
@@ -51,18 +51,16 @@ int kVoting(int globalK, float** shortestKDistances) { // TODO need globalK * nu
 //     }
 // }
 
-// TODO delete rank
-float** getKNNForInstance(int i, int k, float **distancesAndClasses, float **shortestKDistances, ArffData* dataset, int startingIndex, int endingIndex, int distancesAndClassesSize, int rank) {
+float** getKNNForInstance(int i, int k, float **distancesAndClasses, float **shortestKDistances, ArffData* dataset) {
     // TODO witht he outer loop setup, you only enter this if the i is within your endingIndex - startingIndex
-    //TODO gatherall? and scatter isnt worthwil. you can mulitple someting byrank...
-    printf("in getKNNForInstance for rank: %d, i: %d, startingIndex: %d, endingIndex: %d\n", rank, i, startingIndex, endingIndex);
+    // printf("in getKNNForInstance for rank: %d, i: %d, startingIndex: %d, endingIndex: %d\n", rank, i, startingIndex, endingIndex);
     int distancesAndClassesIndex = -1;
 
-    for(int j = startingIndex; j < endingIndex; j++) { // target each other instance
+    for(int j = 0; j < dataset->num_instances(); j++) { // target each other instance
         if (i == j) continue;
 
         distancesAndClassesIndex++;
-        float *row = (float *)malloc(2 * sizeof(float));
+        float *row = (float *)malloc(2 * sizeof(float)); // TODO realloc?
         float distance = 0;
 
         for(int k = 0; k < dataset->num_attributes() - 1; k++) { // compute the distance between the two instances
@@ -75,7 +73,7 @@ float** getKNNForInstance(int i, int k, float **distancesAndClasses, float **sho
         distancesAndClasses[distancesAndClassesIndex] = row;
     }
 
-    qsort(distancesAndClasses, distancesAndClassesSize, (2 * sizeof(float)), compare);
+    qsort(distancesAndClasses, dataset->num_instances() - 1, (2 * sizeof(float)), compare); // TODO dont need to sort, needd to find "k" shortest
 
     for(int j = 0; j < k; j++) {
         shortestKDistances[j] = distancesAndClasses[j];
@@ -100,15 +98,14 @@ int* KNN(ArffData* dataset, int argc, char *argv[]) {
     float recvbuf[SIZE];
 
     int globalK = 3; // TODO make a command line arg
-    if (globalK > dataset->num_instances() - 1)
+    if (globalK > dataset->num_instances() - 1) // NOTE the - 1 is needed because you cant compare to yourself
         globalK = dataset->num_instances() - 1;
-
-    int* predictions = (int*)malloc(dataset->num_instances() * sizeof(int));
 
     MPI_Init(&argc,&argv); // TODO past this point, till finalize, its all private?...but then why does the processor info print -np times?
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numProcesses);
     printf("Hello, world.  I am %d of %d\n", rank, numProcesses);
+    
     source = 0;
 
     int instances_per_proc = dataset->num_instances() / numProcesses;
@@ -116,111 +113,56 @@ int* KNN(ArffData* dataset, int argc, char *argv[]) {
         instances_per_proc++;
 
     int startingIndex = rank * instances_per_proc;
-    int endingIndex = (rank + 1) * instances_per_proc;
-    if (endingIndex >= dataset->num_instances())
+    int theoreticalEndingIndex = (rank + 1) * instances_per_proc; // NOTE its theoretical because there might be excess values that arent there at the end TODO is this true? check
+    int endingIndex;
+    if (theoreticalEndingIndex >= dataset->num_instances())
         endingIndex = dataset->num_instances(); // set to max possible
+    else
+        endingIndex = theoreticalEndingIndex;
 
-    printf("rank: %d, processesInnerIndexesArray: %d, %d\n", rank, startingIndex, endingIndex);
+    printf("rank: %d, startingIndex: %d, endingIndex: %d, theoreticalEndingIndex - startingIndex: %d\n", rank, startingIndex, endingIndex, theoreticalEndingIndex - startingIndex);
 
-    // for(int i = startingIndex; i < endingIndex; i++) { // for each instance in the dataset that the processes has the indexes for
-    for(int i = 0; i < dataset->num_instances(); i++) { // for each instance in the dataset that the processes has the indexes for
+    // Compute the kNN of a processes's data
+    float *distancesAndClasses[dataset->num_instances() - 1];
 
-        // printf("outer loop rank: %d, i: %d\n", rank, i);
+    // Need to ensure that the 'k' value is never bigger than the amount of data a processes will go through
+    float *shortestKDistances[globalK];
 
-        // TODO could be moved to the outside?
-        // Compute the kNN of a processes's data
-        int distancesAndClassesSize = endingIndex - startingIndex;
-        if (i >= startingIndex && i < endingIndex)
-            distancesAndClassesSize--;
-        float *distancesAndClasses[distancesAndClassesSize];
+    int *processPredictions = (int*)malloc((theoreticalEndingIndex - startingIndex) * sizeof(int));
+    int processPredictionsIndex = -1;
 
-        // Need to ensure that the 'k' value is never bigger than the amount of data a processes will go through
-        int localK = globalK;
-        if (localK > instances_per_proc)
-            localK = instances_per_proc;
-        if (localK > distancesAndClassesSize)
-            localK = distancesAndClassesSize;
-        float *shortestKDistances[localK];
+    for(int i = startingIndex; i < endingIndex; i++) { // for each instance in the dataset that the processes has the indexes for
 
-        // printf("rank: %d, globalK: %d, localK: %d, distancesAndClassesSize: %d\n", rank, globalK, localK, distancesAndClassesSize);
-        
-        getKNNForInstance(i, localK, distancesAndClasses, shortestKDistances, dataset, startingIndex, endingIndex, distancesAndClassesSize, rank);
-        // rdorn@costar.com 
-        // int number;
-        // if (rank == 0) {
-        //     getKNNForInstance(i, localK, distancesAndClasses, shortestKDistances, dataset, startingIndex, endingIndex, distancesAndClassesSize);
-        //     // printf("rank: %d, instance: ", rank, dataset->get_instance(i)
-        //     // for (int x = 0; x < localK; x++)
-        //         // printf("rank: %d, shortestKDistances: %d, distance: %f, class: %f\n", rank, x, shortestKDistances[x][0], shortestKDistances[x][1]);
-        //     number = -1;
-
-        //     MPI_Send(&number, 1, MPI_INT, 1, 0, MPI_COMM_WORLD);
-        //     // printf("\n\n");
-        // }  else if (rank == 1) {
-        //     MPI_Recv(&number, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
-
-        //     // printf("rank: %d, distancesAndClassesSize: %d\n", rank, distancesAndClassesSize);
-
-        //     getKNNForInstance(i, localK, distancesAndClasses, shortestKDistances, dataset, startingIndex, endingIndex, distancesAndClassesSize);
-        //     // printf("rank: %d, instance: ", rank, dataset->get_instance(i)
-        //     // for (int x = 0; x < localK; x++)
-        //         // printf("rank: %d, shortestKDistances: %d, distance: %f, class: %f\n", rank, x, shortestKDistances[x][0], shortestKDistances[x][1]);
-        // }
-
-        float *localShortestKDistancesAs1dArray = (float*)malloc(sizeof(float) * localK * 2); // TODO wrong result if rank 0 localK is the smaller one...
-
-        for (int x = 0; x < localK; x++) 
-            for (int y = 0; y < 2; y++)
-                *(localShortestKDistancesAs1dArray + x * 2 + y) = shortestKDistances[x][y];
-
-        // Gather all partial averages down to the root process
-        float *globalShortestKDistancesAs1dArray = NULL;
-        if (rank == 0)
-            globalShortestKDistancesAs1dArray = (float*)malloc(sizeof(float) * localK * 2 * numProcesses); // TODO sometimes, one localK might be 1 smaller than the others... so this could be 1 too big
-
-        // printf("pre gather i: %d, rank: %d\n", i, rank);
-        MPI_Gather(localShortestKDistancesAs1dArray, localK * 2, MPI_FLOAT, globalShortestKDistancesAs1dArray, localK * 2, MPI_FLOAT, source, MPI_COMM_WORLD);
-        // printf("post gather i: %d, rank: %d\n", i, rank);
-
-        // Find the smallest 'k' values of the processes's results
-        if (rank == 0) {
-            // printf("\nlocalShortestKDistancesAs1dArray: ");
-            // for (int x = 0; x < localK * 2; x++) { // TODO wrong result if rank 0 localK is the smaller one...
-            //     printf("%f, ", localShortestKDistancesAs1dArray[x]);
-            // }
-            // printf("\nglobalShortestKDistancesAs1dArray: ");
-            // for (int x = 0; x < localK * 2 * numProcesses; x++) { // TODO wrong result if rank 0 localK is the smaller one...
-            //     printf("%f, ", globalShortestKDistancesAs1dArray[x]);
-            // }
-
-            // printf("\nallProcessesShortestKDistances: \n");
-            float *allProcessesShortestKDistances[localK * numProcesses];
-            for (int x = 0; x < localK * numProcesses; x++) { // TODO wrong result if rank 0 localK is the smaller one...
-                float *row = (float *)malloc(2 * sizeof(float));
-                for (int y = 0; y < 2; y++)
-                    row[y] = *(globalShortestKDistancesAs1dArray + x * 2 + y);
-                allProcessesShortestKDistances[x] = row;
-
-                // printf("%f, %f\n", allProcessesShortestKDistances[x][0], allProcessesShortestKDistances[x][1]);
-            }
-
-            qsort(allProcessesShortestKDistances, localK * numProcesses, (2 * sizeof(float)), compare);
-            float *finalShortestKDistances[globalK];
-            for(int j = 0; j < globalK; j++)
-                finalShortestKDistances[j] = allProcessesShortestKDistances[j];
-            predictions[i] = kVoting(globalK, finalShortestKDistances);
-            printf("i: %d, predicted class: %d\n", i, predictions[i]);
-        }
+        processPredictionsIndex++;
+        getKNNForInstance(i, globalK, distancesAndClasses, shortestKDistances, dataset);
+        processPredictions[processPredictionsIndex] = kVoting(globalK, shortestKDistances);
+        printf("rank: %d, i: %d, predicted class: %d\n", rank, i, processPredictions[processPredictionsIndex]);
 
         // TODO move free, and have all needed frees
         // for (int j = 0; j < dataset->num_instances() - 1; j++) {
         //     free(allProcessesShortestKDistances[j]);
         // }
     }
+
+    int *finalPredictions = NULL;
+    if (rank == source) 
+        finalPredictions = (int*)malloc(sizeof(int) * (theoreticalEndingIndex - startingIndex) * numProcesses);
+    MPI_Gather(processPredictions, theoreticalEndingIndex - startingIndex, MPI_INTEGER, finalPredictions, theoreticalEndingIndex - startingIndex, MPI_INTEGER, source, MPI_COMM_WORLD);
+    if (rank == source) {
+        printf("\nfinalPredictions with potential excess: ");
+        for (int x = 0; x < (theoreticalEndingIndex - startingIndex) * numProcesses; x++) {
+            printf("%d, ", finalPredictions[x]);
+        }
+        printf("\nfinalPredictions: ");
+        for (int x = 0; x < dataset->num_instances(); x++) {
+            printf("%d, ", finalPredictions[x]);
+        }
+    }
     
+
     // printf("rank: %d is done\n", rank);
-    MPI_Finalize();
-    return predictions;
+    MPI_Finalize(); // TODO move this and init to main?
+    return finalPredictions;
 }
 
 int* computeConfusionMatrix(int* predictions, ArffData* dataset) {
