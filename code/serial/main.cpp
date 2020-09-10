@@ -38,7 +38,7 @@ int kVoting(int k, float** shortestKDistances) {
 
 int* KNN(ArffData* dataset)
 {
-    int k = 1;
+    int k = 5;
     if (k > dataset->num_instances() - 1)
         k = dataset->num_instances() - 1;
 
