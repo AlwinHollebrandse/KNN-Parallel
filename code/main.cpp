@@ -143,10 +143,6 @@ int main(int argc, char *argv[]) {
     
     clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
-    // printf("This system has %d processors configured and "
-    //     "%d processors available.\n",
-    //     get_nprocs_conf(), get_nprocs());
-
     int rank, numProcesses, source = 0;
     int globalK = atoi(argv[2]);
     if (globalK > dataset->num_instances() - 1) // NOTE the - 1 is needed because you cant compare to yourself
