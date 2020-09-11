@@ -3,6 +3,18 @@
 #include <iostream> 
 using namespace std; 
   
+
+// A comparator function used by qsort 
+int compare(const void * arg1, const void * arg2) { 
+    int const *lhs = static_cast<int const*>(arg1);
+    int const *rhs = static_cast<int const*>(arg2);
+    return (lhs[0] < rhs[0]) ? -1
+        :  ((rhs[0] < lhs[0]) ? 1
+        :  (lhs[1] < rhs[1] ? -1
+        :  ((rhs[1] < lhs[1] ? 1 : 0))));
+} 
+
+
 // Swap function to interchange 
 // the value of variables x and y 
 int swap(int& x, int& y) 
@@ -98,7 +110,7 @@ void MinHeap::buildHeap()
     } 
 } 
   
-void FirstKelements(int arr[],int size,int k){ 
+void FirstKelements(float (*arr)[2],int size,int k){ 
     // Creating Min Heap for given 
     // array with only k elements 
     MinHeap* m = new MinHeap(k, arr); 
@@ -131,13 +143,24 @@ void FirstKelements(int arr[],int size,int k){
 int main() 
 { 
   
-    int arr[] = { 11, 3, 2, 1, 15, 5, 4, 45, 88, 96, 50, 45 }; 
-    float arr[3][2] = {
-        {2.645751, 2.000000},
+    // int arr[] = { 11, 3, 2, 1, 15, 5, 4, 45, 88, 96, 50, 45 }; 
+    float arr[6][2] = {
+        {2.645751, 5.000000},
         {5.291502, 2.000000},
-        {5.291502, 2.000000}};
+        {5.291502, 1.000000},
+        {15.291502, 3.000000},
+        {25.291502, 4.000000},
+        {15.291502, 3.000000}};
+
+    std::vector<vector<float> > vect {
+        {2.645751, 5.000000},
+        {5.291502, 2.000000},
+        {5.291502, 1.000000},
+        {15.291502, 3.000000},
+        {25.291502, 4.000000},
+        {15.291502, 3.000000}};
   
-    int size = sizeof(arr) / sizeof(arr[0]); 
+    int size = 6; //sizeof(arr) / sizeof(arr[0]); 
   
     // Size of Min Heap 
     int k = 3; 
