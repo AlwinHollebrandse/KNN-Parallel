@@ -26,7 +26,9 @@ There is at least one main improvement that can be made to this code. As the `kN
 
 ## Results:
 the following times were computed by averaging the run CPU times (in ms) for each of the provided dataset 3 times with a k of value 5.
+
 | -np: | large | medium | small |
+| --- | --- | --- | --- |
 | 1 | 169452.3333 | 10587.66667 | 266 |
 |2 | 88465.33333 | 5428 | 256.6666667 |
 |4 | 19592 | 2941.333333 | 263.3333333 |
