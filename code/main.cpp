@@ -13,18 +13,17 @@
 using namespace std;
 
 // A comparator function used by qsort 
-int compare(const void * a, const void * b) { 
-  const int *fa = *(const int **) a;
-  const int *fb = *(const int **) b;
-  return (fa[0] > fb[0]) - (fa[0] < fb[0]);
+int compare(const void * arg1, const void * arg2) { 
+    int const *lhs = static_cast<int const*>(arg1);
+    int const *rhs = static_cast<int const*>(arg2);
+    return (lhs[0] < rhs[0]) ? -1
+        :  ((rhs[0] < lhs[0]) ? 1
+        :  (lhs[1] < rhs[1] ? -1
+        :  ((rhs[1] < lhs[1] ? 1 : 0))));
 } 
 
 // Performs majority voting using the first globalK first elements of an array
-int kVoting(int globalK, float** shortestKDistances) {
-    // for (int i =0; i < globalK; i++) {
-    //     printf("i: %d, distance: %f, class: %f\n", i, shortestKDistances[i][0], shortestKDistances[i][1]);
-    // }
-
+int kVoting(int globalK, float (*shortestKDistances)[2]) {
     map<float, int> classCounter;
     for (int i = 0; i < globalK; i++) {
         classCounter[shortestKDistances[i][1]]++;
@@ -42,13 +41,12 @@ int kVoting(int globalK, float** shortestKDistances) {
     return voteResult;
 }
 
-float** getKNNForInstance(int i, int k, float **distancesAndClasses, float **shortestKDistances, ArffData* dataset) {
+void* getKNNForInstance(int i, int k, float (*distancesAndClasses)[2], float (*shortestKDistances)[2], ArffData* dataset) {
     int distancesAndClassesIndex = 0;
 
     for(int j = 0; j < dataset->num_instances(); j++) { // target each other instance
         if (i == j) continue;
 
-        float *row = (float *)malloc(2 * sizeof(float)); // TODO realloc? // TODO free
         float distance = 0;
 
         for(int k = 0; k < dataset->num_attributes() - 1; k++) { // compute the distance between the two instances
@@ -56,19 +54,17 @@ float** getKNNForInstance(int i, int k, float **distancesAndClasses, float **sho
             distance += diff * diff;
         }
 
-        row[0] = sqrt(distance);
-        row[1] = dataset->get_instance(j)->get(dataset->num_attributes() - 1)->operator float();
-        // float row[] = {sqrt(distance), dataset->get_instance(j)->get(dataset->num_attributes() - 1)->operator float()};
-        distancesAndClasses[distancesAndClassesIndex] = row;
+        distancesAndClasses[distancesAndClassesIndex][0] = sqrt(distance);
+        distancesAndClasses[distancesAndClassesIndex][1] = dataset->get_instance(j)->get(dataset->num_attributes() - 1)->operator float();
+
         distancesAndClassesIndex++;
     }
 
-    qsort(distancesAndClasses, dataset->num_instances() - 1, (2 * sizeof(float)), compare); // TODO dont need to sort, need to find "k" shortest
+    qsort(distancesAndClasses, dataset->num_instances() - 1, (2 * sizeof(float)), compare); // TODO dont need to sort, need to find "k" shortest. Due to programming time contraints, this wasnt done yet
 
-    printf("shortestKDistances: ");
     for(int j = 0; j < k; j++) {
-        shortestKDistances[j] = distancesAndClasses[j];
-        printf("row: %d, distance: %f, class: %f\n", j, shortestKDistances[j][0], shortestKDistances[j][1]);
+        shortestKDistances[j][0] = distancesAndClasses[j][0];
+        shortestKDistances[j][1] = distancesAndClasses[j][1];
     }
 }
 
@@ -77,33 +73,25 @@ int* KNN(ArffData* dataset, int rank, int numProcesses, int source, int globalK)
     if (dataset->num_instances() % numProcesses > 0)
         instances_per_proc++;
 
+    // compute the indices of the current process' data "chunk"
     int startingIndex = rank * instances_per_proc;
-    int theoreticalEndingIndex = (rank + 1) * instances_per_proc; // NOTE its theoretical because there might be excess values that arent there at the end TODO is this true? check
+    int theoreticalEndingIndex = (rank + 1) * instances_per_proc; // NOTE its theoretical because there might be excess values that arent there at the end
     int endingIndex;
     if (theoreticalEndingIndex >= dataset->num_instances())
         endingIndex = dataset->num_instances(); // set to max possible
     else
         endingIndex = theoreticalEndingIndex;
 
-    // Compute the kNN of a processes's data
-    float *distancesAndClasses[dataset->num_instances() - 1];
-
-    // Need to ensure that the 'k' value is never bigger than the amount of data a processes will go through
-    float *shortestKDistances[globalK];
+    float distancesAndClasses[dataset->num_instances() - 1][2];
+    float shortestKDistances[globalK][2];
 
     int predictionSize = theoreticalEndingIndex - startingIndex;
-
-    printf("rank: %d, startingIndex: %d, endingIndex: %d, predictionSize: %d\n", rank, startingIndex, endingIndex, predictionSize);
-
     int *processPredictions = (int*)malloc(predictionSize * sizeof(int));
     int processPredictionsIndex = 0;
 
     for(int i = startingIndex; i < endingIndex; i++) { // for each instance in the dataset that the processes has the indexes for
-    // for(int i = 0; i < 1; i++) { // for each instance in the dataset that the processes has the indexes for
-
         getKNNForInstance(i, globalK, distancesAndClasses, shortestKDistances, dataset);
         processPredictions[processPredictionsIndex] = kVoting(globalK, shortestKDistances);
-        // printf("rank: %d, i: %d, predicted class: %d\n", rank, i, processPredictions[processPredictionsIndex]);
         processPredictionsIndex++;
     }
 
@@ -112,21 +100,10 @@ int* KNN(ArffData* dataset, int rank, int numProcesses, int source, int globalK)
         finalPredictions = (int*)malloc(sizeof(int) * predictionSize * numProcesses);
 
     MPI_Gather(processPredictions, predictionSize, MPI_INTEGER, finalPredictions, predictionSize, MPI_INTEGER, source, MPI_COMM_WORLD);
-    if (rank == source) {
-        printf("\nfinalPredictions with potential excess: ");
-        for (int x = 0; x < predictionSize * numProcesses; x++) {
-            printf("%d, ", finalPredictions[x]);
-        }
-        printf("\nfinalPredictions: ");
-        for (int x = 0; x < dataset->num_instances(); x++) {
-            printf("%d, ", finalPredictions[x]);
-        }
-    }
+    // NOTE finalPredicitions is predictionSize * numProcesses, which might be larger than dataset->num_instances() if said number wasnt divisible by -np. 
+    // NOTE This potential excess wont be used for accuracy computations because that for loop is limited to dataset->num_instances() iterations 
 
     free(processPredictions);
-    // for (int j = 0; j < predictionSize; j++) {
-    //     free(processPredictions[j]);
-    // }
     return finalPredictions;
 }
 
@@ -166,30 +143,23 @@ int main(int argc, char *argv[]) {
     
     clock_gettime(CLOCK_MONOTONIC_RAW, &start);
 
-    printf("This system has %d processors configured and "
-        "%d processors available.\n",
-        get_nprocs_conf(), get_nprocs());
+    // printf("This system has %d processors configured and "
+    //     "%d processors available.\n",
+    //     get_nprocs_conf(), get_nprocs());
 
     int rank, numProcesses, source = 0;
     int globalK = atoi(argv[2]);
     if (globalK > dataset->num_instances() - 1) // NOTE the - 1 is needed because you cant compare to yourself
         globalK = dataset->num_instances() - 1;
 
-    MPI_Init(&argc,&argv); // TODO past this point, till finalize, its all private?...but then why does the processor info print -np times?
+    MPI_Init(&argc,&argv);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &numProcesses);
-    printf("Hello, world.  I am %d of %d\n", rank, numProcesses);
     
     // Get the class predictions
-    // int* predictions = KNN(dataset, argc, argv);
     int* predictions = KNN(dataset, rank, numProcesses, source, globalK);
-    if (rank == source) {
-        for(int i = 0; i < dataset->num_instances(); i++) {
-            printf("%d, ", predictions[i]);
-        }
-    }
 
-    if (rank == source) { // TODO move init and finalize so rank can be used here?
+    if (rank == source) {
         // Compute the confusion matrix
         int* confusionMatrix = computeConfusionMatrix(predictions, dataset);
         // Calculate the accuracy
