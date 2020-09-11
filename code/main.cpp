@@ -20,7 +20,11 @@ int compare(const void * a, const void * b) {
 } 
 
 // Performs majority voting using the first globalK first elements of an array
-int kVoting(int globalK, float** shortestKDistances) { // TODO need globalK * number of processes? int len = sizeof(arr)/sizeof(arr[0]);
+int kVoting(int globalK, float** shortestKDistances) {
+    // for (int i =0; i < globalK; i++) {
+    //     printf("i: %d, distance: %f, class: %f\n", i, shortestKDistances[i][0], shortestKDistances[i][1]);
+    // }
+
     map<float, int> classCounter;
     for (int i = 0; i < globalK; i++) {
         classCounter[shortestKDistances[i][1]]++;
@@ -35,32 +39,16 @@ int kVoting(int globalK, float** shortestKDistances) { // TODO need globalK * nu
         }
     }
 
-    // for (auto i : classCounter) {
-    //     printf("class: %d, numberOfVotes: %d ", (int)i.first, i.second);
-    // }
-
     return voteResult;
 }
 
-// void printArray(float *datasetAsMatrix, int numberOfRows, int numberOfCols, int rank) {
-//     for (int x = 0; x < numberOfRows; x++) {
-//         for (int y = 0; y < numberOfCols; y++) {
-//             printf("rank:%d, datasetAsMatrix[%d][%d]: %f\n", rank, x, y, *(datasetAsMatrix + x * numberOfCols + y));
-//         }
-//         printf("\n");
-//     }
-// }
-
 float** getKNNForInstance(int i, int k, float **distancesAndClasses, float **shortestKDistances, ArffData* dataset) {
-    // TODO witht he outer loop setup, you only enter this if the i is within your endingIndex - startingIndex
-    // printf("in getKNNForInstance for rank: %d, i: %d, startingIndex: %d, endingIndex: %d\n", rank, i, startingIndex, endingIndex);
-    int distancesAndClassesIndex = -1;
+    int distancesAndClassesIndex = 0;
 
     for(int j = 0; j < dataset->num_instances(); j++) { // target each other instance
         if (i == j) continue;
 
-        distancesAndClassesIndex++;
-        float *row = (float *)malloc(2 * sizeof(float)); // TODO realloc?
+        float *row = (float *)malloc(2 * sizeof(float)); // TODO realloc? // TODO free
         float distance = 0;
 
         for(int k = 0; k < dataset->num_attributes() - 1; k++) { // compute the distance between the two instances
@@ -70,44 +58,21 @@ float** getKNNForInstance(int i, int k, float **distancesAndClasses, float **sho
 
         row[0] = sqrt(distance);
         row[1] = dataset->get_instance(j)->get(dataset->num_attributes() - 1)->operator float();
+        // float row[] = {sqrt(distance), dataset->get_instance(j)->get(dataset->num_attributes() - 1)->operator float()};
         distancesAndClasses[distancesAndClassesIndex] = row;
+        distancesAndClassesIndex++;
     }
 
-    qsort(distancesAndClasses, dataset->num_instances() - 1, (2 * sizeof(float)), compare); // TODO dont need to sort, needd to find "k" shortest
+    qsort(distancesAndClasses, dataset->num_instances() - 1, (2 * sizeof(float)), compare); // TODO dont need to sort, need to find "k" shortest
 
+    printf("shortestKDistances: ");
     for(int j = 0; j < k; j++) {
         shortestKDistances[j] = distancesAndClasses[j];
+        printf("row: %d, distance: %f, class: %f\n", j, shortestKDistances[j][0], shortestKDistances[j][1]);
     }
 }
 
-int* KNN(ArffData* dataset, int argc, char *argv[]) {
-    printf("This system has %d processors configured and "
-        "%d processors available.\n",
-        get_nprocs_conf(), get_nprocs());
-
-    // int world_size, world_rank, sendcount, recvcount, source; // TODO is source needed? or most of these
-
-    // TODO what can be deleted?
-    int SIZE = 2;
-    int numProcesses, rank, sendcount, recvcount, source;
-    float sendbuf[SIZE][SIZE] = {
-        {1.0, 2.0, 3.0, 4.0},
-        {5.0, 6.0, 7.0, 8.0},
-        {9.0, 10.0, 11.0, 12.0},
-        {13.0, 14.0, 15.0, 16.0}  };
-    float recvbuf[SIZE];
-
-    int globalK = 3; // TODO make a command line arg
-    if (globalK > dataset->num_instances() - 1) // NOTE the - 1 is needed because you cant compare to yourself
-        globalK = dataset->num_instances() - 1;
-
-    MPI_Init(&argc,&argv); // TODO past this point, till finalize, its all private?...but then why does the processor info print -np times?
-    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &numProcesses);
-    printf("Hello, world.  I am %d of %d\n", rank, numProcesses);
-    
-    source = 0;
-
+int* KNN(ArffData* dataset, int rank, int numProcesses, int source, int globalK) {
     int instances_per_proc = dataset->num_instances() / numProcesses;
     if (dataset->num_instances() % numProcesses > 0)
         instances_per_proc++;
@@ -120,37 +85,36 @@ int* KNN(ArffData* dataset, int argc, char *argv[]) {
     else
         endingIndex = theoreticalEndingIndex;
 
-    printf("rank: %d, startingIndex: %d, endingIndex: %d, theoreticalEndingIndex - startingIndex: %d\n", rank, startingIndex, endingIndex, theoreticalEndingIndex - startingIndex);
-
     // Compute the kNN of a processes's data
     float *distancesAndClasses[dataset->num_instances() - 1];
 
     // Need to ensure that the 'k' value is never bigger than the amount of data a processes will go through
     float *shortestKDistances[globalK];
 
-    int *processPredictions = (int*)malloc((theoreticalEndingIndex - startingIndex) * sizeof(int));
-    int processPredictionsIndex = -1;
+    int predictionSize = theoreticalEndingIndex - startingIndex;
+
+    printf("rank: %d, startingIndex: %d, endingIndex: %d, predictionSize: %d\n", rank, startingIndex, endingIndex, predictionSize);
+
+    int *processPredictions = (int*)malloc(predictionSize * sizeof(int));
+    int processPredictionsIndex = 0;
 
     for(int i = startingIndex; i < endingIndex; i++) { // for each instance in the dataset that the processes has the indexes for
+    // for(int i = 0; i < 1; i++) { // for each instance in the dataset that the processes has the indexes for
 
-        processPredictionsIndex++;
         getKNNForInstance(i, globalK, distancesAndClasses, shortestKDistances, dataset);
         processPredictions[processPredictionsIndex] = kVoting(globalK, shortestKDistances);
-        printf("rank: %d, i: %d, predicted class: %d\n", rank, i, processPredictions[processPredictionsIndex]);
-
-        // TODO move free, and have all needed frees
-        // for (int j = 0; j < dataset->num_instances() - 1; j++) {
-        //     free(allProcessesShortestKDistances[j]);
-        // }
+        // printf("rank: %d, i: %d, predicted class: %d\n", rank, i, processPredictions[processPredictionsIndex]);
+        processPredictionsIndex++;
     }
 
     int *finalPredictions = NULL;
     if (rank == source) 
-        finalPredictions = (int*)malloc(sizeof(int) * (theoreticalEndingIndex - startingIndex) * numProcesses);
-    MPI_Gather(processPredictions, theoreticalEndingIndex - startingIndex, MPI_INTEGER, finalPredictions, theoreticalEndingIndex - startingIndex, MPI_INTEGER, source, MPI_COMM_WORLD);
+        finalPredictions = (int*)malloc(sizeof(int) * predictionSize * numProcesses);
+
+    MPI_Gather(processPredictions, predictionSize, MPI_INTEGER, finalPredictions, predictionSize, MPI_INTEGER, source, MPI_COMM_WORLD);
     if (rank == source) {
         printf("\nfinalPredictions with potential excess: ");
-        for (int x = 0; x < (theoreticalEndingIndex - startingIndex) * numProcesses; x++) {
+        for (int x = 0; x < predictionSize * numProcesses; x++) {
             printf("%d, ", finalPredictions[x]);
         }
         printf("\nfinalPredictions: ");
@@ -158,10 +122,11 @@ int* KNN(ArffData* dataset, int argc, char *argv[]) {
             printf("%d, ", finalPredictions[x]);
         }
     }
-    
 
-    // printf("rank: %d is done\n", rank);
-    MPI_Finalize(); // TODO move this and init to main?
+    free(processPredictions);
+    // for (int j = 0; j < predictionSize; j++) {
+    //     free(processPredictions[j]);
+    // }
     return finalPredictions;
 }
 
@@ -189,8 +154,8 @@ float computeAccuracy(int* confusionMatrix, ArffData* dataset) {
 }
 
 int main(int argc, char *argv[]) {
-    if(argc != 2) {
-        cout << "Usage: ./main datasets/datasetFile.arff" << endl;
+    if(argc != 3) {
+        cout << "Usage: ./main datasets/datasetFile.arff kValue" << endl;
         exit(0);
     }
     
@@ -200,18 +165,43 @@ int main(int argc, char *argv[]) {
     struct timespec start, end;
     
     clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+
+    printf("This system has %d processors configured and "
+        "%d processors available.\n",
+        get_nprocs_conf(), get_nprocs());
+
+    int rank, numProcesses, source = 0;
+    int globalK = atoi(argv[2]);
+    if (globalK > dataset->num_instances() - 1) // NOTE the - 1 is needed because you cant compare to yourself
+        globalK = dataset->num_instances() - 1;
+
+    MPI_Init(&argc,&argv); // TODO past this point, till finalize, its all private?...but then why does the processor info print -np times?
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &numProcesses);
+    printf("Hello, world.  I am %d of %d\n", rank, numProcesses);
     
     // Get the class predictions
-    int* predictions = KNN(dataset, argc, argv);
-    // Compute the confusion matrix
-    // int* confusionMatrix = computeConfusionMatrix(predictions, dataset);
-    // // Calculate the accuracy
-    // float accuracy = computeAccuracy(confusionMatrix, dataset);
-    
-    // clock_gettime(CLOCK_MONOTONIC_RAW, &end);
-    // uint64_t diff = (1000000000L * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / 1e6;
+    // int* predictions = KNN(dataset, argc, argv);
+    int* predictions = KNN(dataset, rank, numProcesses, source, globalK);
+    if (rank == source) {
+        for(int i = 0; i < dataset->num_instances(); i++) {
+            printf("%d, ", predictions[i]);
+        }
+    }
 
-    // free(predictions);
-  
-    // printf("The KNN classifier for %lu instances required %llu ms CPU time, accuracy was %.4f\n", dataset->num_instances(), (long long unsigned int) diff, accuracy);
+    if (rank == source) { // TODO move init and finalize so rank can be used here?
+        // Compute the confusion matrix
+        int* confusionMatrix = computeConfusionMatrix(predictions, dataset);
+        // Calculate the accuracy
+        float accuracy = computeAccuracy(confusionMatrix, dataset);
+        
+        clock_gettime(CLOCK_MONOTONIC_RAW, &end);
+        uint64_t diff = (1000000000L * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / 1e6;
+
+
+        printf("The KNN classifier for %lu instances required %llu ms CPU time, accuracy was %.4f\n", dataset->num_instances(), (long long unsigned int) diff, accuracy);
+    }
+
+    free(predictions);
+    MPI_Finalize();
 }

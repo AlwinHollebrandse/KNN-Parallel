@@ -36,12 +36,8 @@ int kVoting(int k, float** shortestKDistances) {
     return voteResult;
 }
 
-int* KNN(ArffData* dataset)
+int* KNN(ArffData* dataset, int k)
 {
-    int k = 5;
-    if (k > dataset->num_instances() - 1)
-        k = dataset->num_instances() - 1;
-
     int* predictions = (int*)malloc(dataset->num_instances() * sizeof(int));
 
     for(int i = 0; i < dataset->num_instances(); i++) // for each instance in the dataset
@@ -155,9 +151,9 @@ float computeAccuracy(int* confusionMatrix, ArffData* dataset)
 
 int main(int argc, char *argv[])
 {
-    if(argc != 2)
+    if(argc != 3)
     {
-        cout << "Usage: ./main datasets/datasetFile.arff" << endl;
+        cout << "Usage: ./main datasets/datasetFile.arff kValue" << endl;
         exit(0);
     }
     
@@ -167,8 +163,12 @@ int main(int argc, char *argv[])
     uint64_t diff;
     
     clock_gettime(CLOCK_MONOTONIC_RAW, &start);
+
+    int k = atoi(argv[2]);
+    if (k > dataset->num_instances() - 1)
+        k = dataset->num_instances() - 1;
     
-    int* predictions = KNN(dataset);
+    int* predictions = KNN(dataset, k);
     
     clock_gettime(CLOCK_MONOTONIC_RAW, &end);
     diff = (1000000000L * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / 1e6;
