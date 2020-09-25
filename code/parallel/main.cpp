@@ -8,19 +8,10 @@
 #include "libarff/arff_data.h"
 #include <map>
 #include <sys/sysinfo.h>
+#include <algorithm> // for heap  
 #include "mpi.h"
 
 using namespace std;
-
-// A comparator function used by qsort 
-int compare(const void * arg1, const void * arg2) { 
-    int const *lhs = static_cast<int const*>(arg1);
-    int const *rhs = static_cast<int const*>(arg2);
-    return (lhs[0] < rhs[0]) ? -1
-        :  ((rhs[0] < lhs[0]) ? 1
-        :  (lhs[1] < rhs[1] ? -1
-        :  ((rhs[1] < lhs[1] ? 1 : 0))));
-} 
 
 // Performs majority voting using the first globalK first elements of an array
 int kVoting(int globalK, float (*shortestKDistances)[2]) {
@@ -41,8 +32,41 @@ int kVoting(int globalK, float (*shortestKDistances)[2]) {
     return voteResult;
 }
 
-void* getKNNForInstance(int i, int k, float (*distancesAndClasses)[2], float (*shortestKDistances)[2], ArffData* dataset) {
-    int distancesAndClassesIndex = 0;
+struct DistanceAndClass {
+	float distance;
+	int assignedClass; // class is a reserved word
+};
+
+DistanceAndClass* newDistanceAndClass(float distance, int assignedClass) { 
+    DistanceAndClass* temp = new DistanceAndClass; 
+	temp->distance = distance; 
+	temp->assignedClass = assignedClass; 
+    return temp; 
+}
+
+struct DistanceAndClass_rank_greater_than {
+    bool operator()(DistanceAndClass* const a, DistanceAndClass* const b) const {
+        return a->distance > b->distance;
+    }
+};
+
+// Function to return k'th smallest element in a given array 
+void kthSmallest(std::vector<DistanceAndClass*> distanceAndClassVector, int k, float (*shortestKDistances)[2]) {
+	// build a min heap
+	std::make_heap(distanceAndClassVector.begin(), distanceAndClassVector.end(), DistanceAndClass_rank_greater_than());
+  
+    // Extract min (k) times 
+	for (int i = 0; i < k; i++) {
+		shortestKDistances[i][0] = distanceAndClassVector.front()->distance;
+		shortestKDistances[i][1] = (float)distanceAndClassVector.front()->assignedClass;
+		std::pop_heap (distanceAndClassVector.begin(), distanceAndClassVector.end(), DistanceAndClass_rank_greater_than());
+		distanceAndClassVector.pop_back();
+	}
+}
+
+// void* getKNNForInstance(int i, int k, float (*distancesAndClasses)[2], float (*shortestKDistances)[2], ArffData* dataset) {
+void* getKNNForInstance(int i, int k, std::vector<DistanceAndClass*> distanceAndClassVector, float (*shortestKDistances)[2], ArffData* dataset) {
+    // int distancesAndClassesIndex = 0;
 
     for(int j = 0; j < dataset->num_instances(); j++) { // target each other instance
         if (i == j) continue;
@@ -54,18 +78,13 @@ void* getKNNForInstance(int i, int k, float (*distancesAndClasses)[2], float (*s
             distance += diff * diff;
         }
 
-        distancesAndClasses[distancesAndClassesIndex][0] = sqrt(distance);
-        distancesAndClasses[distancesAndClassesIndex][1] = dataset->get_instance(j)->get(dataset->num_attributes() - 1)->operator float();
-
-        distancesAndClassesIndex++;
+        distance = sqrt(distance);
+        int assignedClass = dataset->get_instance(j)->get(dataset->num_attributes() - 1)->operator float();
+        DistanceAndClass* distanceAndClass = newDistanceAndClass(distance, assignedClass);
+        distanceAndClassVector.push_back(distanceAndClass);
     }
 
-    qsort(distancesAndClasses, dataset->num_instances() - 1, (2 * sizeof(float)), compare); // TODO dont need to sort, need to find "k" shortest. Due to programming time contraints, this wasnt done yet
-
-    for(int j = 0; j < k; j++) {
-        shortestKDistances[j][0] = distancesAndClasses[j][0];
-        shortestKDistances[j][1] = distancesAndClasses[j][1];
-    }
+    kthSmallest(distanceAndClassVector, k, shortestKDistances);
 }
 
 int* KNN(ArffData* dataset, int rank, int numProcesses, int source, int globalK) {
@@ -82,7 +101,7 @@ int* KNN(ArffData* dataset, int rank, int numProcesses, int source, int globalK)
     else
         endingIndex = theoreticalEndingIndex;
 
-    float distancesAndClasses[dataset->num_instances() - 1][2];
+    std::vector<DistanceAndClass*> distanceAndClassVector;
     float shortestKDistances[globalK][2];
 
     int predictionSize = theoreticalEndingIndex - startingIndex;
@@ -90,7 +109,7 @@ int* KNN(ArffData* dataset, int rank, int numProcesses, int source, int globalK)
     int processPredictionsIndex = 0;
 
     for(int i = startingIndex; i < endingIndex; i++) { // for each instance in the dataset that the processes has the indexes for
-        getKNNForInstance(i, globalK, distancesAndClasses, shortestKDistances, dataset);
+        getKNNForInstance(i, globalK, distanceAndClassVector, shortestKDistances, dataset);
         processPredictions[processPredictionsIndex] = kVoting(globalK, shortestKDistances);
         processPredictionsIndex++;
     }
@@ -142,10 +161,6 @@ int main(int argc, char *argv[]) {
     struct timespec start, end;
     
     clock_gettime(CLOCK_MONOTONIC_RAW, &start);
-
-    // printf("This system has %d processors configured and "
-    //     "%d processors available.\n",
-    //     get_nprocs_conf(), get_nprocs());
 
     int rank, numProcesses, source = 0;
     int globalK = atoi(argv[2]);

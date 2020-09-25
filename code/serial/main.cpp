@@ -66,7 +66,7 @@ int* KNN(ArffData* dataset, int k)
             distancesAndClasses[distancesAndClassesIndex] = row;
         }
 
-        qsort(distancesAndClasses, dataset->num_instances() - 1, (2 * sizeof(float)), compare);
+        qsort(distancesAndClasses, dataset->num_instances() - 1, (2 * sizeof(float)), compare); // TODO instead of sorting, use heap version like parallel code does
 
         float *shortestKDistances[k];
         for(int j = 0; j < k; j++) {
@@ -83,21 +83,25 @@ int* KNN(ArffData* dataset, int k)
     return predictions;
 }
 
-int* KNNOpenMP(ArffData* dataset)
+int* KNNOpenMP(ArffData* dataset, int k)
 {
     int* predictions = (int*)malloc(dataset->num_instances() * sizeof(int));
-    
+
     #pragma omp parallel for
     for(int i = 0; i < dataset->num_instances(); i++) // for each instance in the dataset
     {
-        float smallestDistance = FLT_MAX;
-        int smallestDistanceClass;
+        float *distancesAndClasses[dataset->num_instances() - 1]; // NOTE the -1 is there so that the instance in question wont be included
+        int distancesAndClassesIndex = -1;
 
         #pragma omp parallel for
         for(int j = 0; j < dataset->num_instances(); j++) // target each other instance
         {
-            if(i == j) continue;
-            
+            if (i == j) continue;
+
+            distancesAndClassesIndex++;
+
+            float *row = (float *)malloc(2 * sizeof(float));
+
             float distance = 0;
             
             for(int k = 0; k < dataset->num_attributes() - 1; k++) // compute the distance between the two instances
@@ -106,21 +110,27 @@ int* KNNOpenMP(ArffData* dataset)
                 distance += diff * diff;
             }
             
-            distance = sqrt(distance);
-            
-            if(distance < smallestDistance) // select the closest one
-            {
-                smallestDistance = distance;
-                smallestDistanceClass = dataset->get_instance(j)->get(dataset->num_attributes() - 1)->operator int32();
-            }
+            row[0] = sqrt(distance);
+            row[1] = dataset->get_instance(j)->get(dataset->num_attributes() - 1)->operator float();
+            distancesAndClasses[distancesAndClassesIndex] = row;
+        }
+
+        qsort(distancesAndClasses, dataset->num_instances() - 1, (2 * sizeof(float)), compare); // TODO instead of sorting, use heap version like parallel code does
+
+        float *shortestKDistances[k];
+        for(int j = 0; j < k; j++) {
+            shortestKDistances[j] = distancesAndClasses[j];
         }
         
-        predictions[i] = smallestDistanceClass;
+        predictions[i] = kVoting(k, shortestKDistances);
+
+        for (int j = 0; j < dataset->num_instances() - 1; j++) {
+            free(distancesAndClasses[j]);
+        }
     }
     
     return predictions;
 }
-
 
 int* computeConfusionMatrix(int* predictions, ArffData* dataset)
 {
@@ -180,7 +190,7 @@ int main(int argc, char *argv[])
     
     clock_gettime(CLOCK_MONOTONIC_RAW, &start);
     
-    predictions = KNNOpenMP(dataset);
+    predictions = KNNOpenMP(dataset, k);
     
     clock_gettime(CLOCK_MONOTONIC_RAW, &end);
     diff = (1000000000L * (end.tv_sec - start.tv_sec) + end.tv_nsec - start.tv_nsec) / 1e6;
