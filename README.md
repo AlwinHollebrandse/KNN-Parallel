@@ -21,16 +21,13 @@ The current final iteration of the parallel version of this code works works as 
 ## kNN:
 The kNN call (getKNNForInstance) is computed as follows: for a given dataset instance, calculate the euclidean distance compared to each other dataset instances. Record these distances and the attached class of each value. Sort this resulting array in ascending order according to distance. Take the first `k` pairs of the sorted list and perform `kVoting` to get a prediction. Voting works but getting the count of each class in the kNN values. The class with the most votes is predicted. In the event of a tie, the first class encountered that had that vote amount is returned.
 
-## Potential Improvements:
-There is at least one main improvement that can be made to this code. As the `kNN` section states, once the distance and class of each other instance to a given data point that needs to be classified, it gets added to an array. This array is then sorted in ascending order according to distance and the first `k` instances are returned. There is a possible time complexity improvement by not sorting the array and instead only finding the `k` smallest distances (with the respective class). There are several methods to accomplish that listed [here](https://www.geeksforgeeks.org/k-largestor-smallest-elements-in-an-array/). The final listed method has a time complexity of O(k + (n-k)Logk) compared to the current sorting's cost of O(nlog(n)). There is a partially complete code of this located in smallestKDistances.cpp. The data should also be normalized.
-
 ## Results:
 the following times were computed by averaging the run CPU times (in ms) for each of the provided dataset 3 times with a k of value 5.
 
 | -np: | large | medium | small |
 | --- | --- | --- | --- |
 | 1 | 169452.3333 | 10587.66667 | 266 |
-|2 | 88465.33333 | 5428 | 256.6666667 |
-|4 | 19592 | 2941.333333 | 263.3333333 |
-|8 | TODO | 1678.666667 | 267 |
-|16 | 13622.33333 | 1081 | 295.3333333 |
+| 2 | 88465.33333 | 5428 | 256.6666667 |
+| 4 | 19592 | 2941.333333 | 263.3333333 |
+| 8 | TODO | 1678.666667 | 267 |
+| 16 | 13622.33333 | 1081 | 295.3333333 |
